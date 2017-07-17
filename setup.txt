@@ -1,0 +1,150 @@
+# Linux update
+sudo apt-get -y update
+
+# install vim
+sudo apt-get -y install vim
+
+# Apache install
+sudo apt-get -y install apache2
+
+# Surpresses Mysql password prompt
+echo mysql-server-5.5 mysql-server/root_password password pass@word | debconf-set-selections
+echo mysql-server-5.5 mysql-server/root_password_again password pass@word | debconf-set-selections
+
+# Mysql install
+sudo apt-get -y install mysql-server php5-mysql
+
+# PHP install
+sudo apt-get -y install php5 libapache2-mod-php5 php5-mcrypt php5-mysql php5-gd php5-dev php5-curl php-apc php5-cli php5-json php5-cgi
+
+# Install bonus package
+sudo apt-get -y install mercurial subversion python-pygments sendmail imagemagick
+
+# Git install
+sudo apt-get -y install git
+
+# Git clone
+cd /var/www
+git clone https://github.com/phacility/libphutil.git
+git clone https://github.com/phacility/arcanist.git
+git clone https://github.com/phacility/phabricator.git
+
+# Set users
+sudo adduser phd --gecos "" --disabled-password --quiet
+sudo adduser phd sudo --quiet
+sudo adduser git --gecos "" --disabled-password --quiet
+
+# Set permissions
+sudo echo '
+phd ALL=(ALL) SETENV: NOPASSWD: /var/www/phabricator
+git ALL=(phd) SETENV: NOPASSWD: /usr/bin/git-upload-pack, /usr/bin/git-receive-pack, /usr/bin/hg, /usr/bin/svnserve
+www-data ALL=(phd) SETENV: NOPASSWD: /usr/bin/git-upload-pack, /usr/lib/git-core/git-http-backend, /usr/bin/hg
+ ' >> /etc/sudoers
+
+# And create repo directory if phabricator will be hosting repos:
+sudo mkdir /var/repo
+sudo chown -R phd /var/repo
+sudo chgrp -R phd /var/repo
+
+
+# Enable mod_rewrite
+sudo a2enmod rewrite
+sudo service apache2 restart
+
+# General settings phabricator
+cd phabricator
+./bin/config set mysql.user root
+./bin/config set mysql.pass <password>
+./bin/config set phabricator.base-uri 'https://phabricator.codemaster.io/'
+./bin/config set phd.user phd
+./bin/config set diffusion.ssh-user git
+./bin/config set pygments.enabled true
+./bin/config set diffusion.ssh-port 2222
+./bin/storage upgrade
+
+# Configuring virtual host
+vim /etc/apache2/sites-available/000-default.conf
+
+<VirtualHost *:80>
+        ServerName phabricator.codemaster.io
+        ServerAdmin webmaster@phabricator.codemaster.io
+        DocumentRoot /var/www/phabricator/webroot
+
+        <Directory /var/www/phabricator/webroot/>
+                Require all granted
+        </Directory>
+
+        RewriteEngine on
+        RewriteRule ^/rsrc/(.*)     -                       [L,QSA]
+        RewriteRule ^/favicon.ico   -                       [L,QSA]
+        RewriteRule ^(.*)$          /index.php?__path__=$1  [B,L,QSA]
+
+        ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+
+# apache server restart
+sudo service apache2 restart
+
+# tmp dir create
+sudo mkdir -p /var/tmp/phd
+sudo chown phd:phd /var/tmp/phd
+
+# Phabricator daemon start
+./bin/phd start
+
+# if you found something Exception for phabricator daemon start[ Specified daemon PID directory ('/var/tmp/phd/pid') does not exist or is not writable by the daemon user! at [<phutil>/src/daemon/PhutilDaemonOverseer.php:122] ]
+sudo chmod go+w /var/tmp/phd/pid
+
+# SSL configure [certbot.eff.org]
+sudo apt-get install software-properties-common
+sudo add-apt-repository ppa:certbot/certbot
+sudo apt-get update
+sudo apt-get install python-certbot-apache 
+sudo certbot --apache
+
+# Configure mysql and storage:
+vim /etc/mysql/my.cnf
+innodb_buffer_pool_size=800M
+max_allowed_packet      = 32M
+# restart mysql and upgrade storage
+service restart mysql
+./bin/storage upgrade
+
+# Configure php:
+vim /etc/php5/apache2/php.ini
+
+post_max_size = 32M
+date.timezone = Etc/UTC
+opcache.validate_timestamps=0
+
+# Then restart apache
+service apache2 restart
+
+# Restart phd daemons:
+./bin/phd restart
+
+# Make executable ssh hook for phabricator ssh daemon
+cp /var/www/phabricator/resources/sshd/phabricator-ssh-hook.sh /usr/lib/phabricator-ssh-hook.sh
+chown root /usr/lib/phabricator-ssh-hook.sh
+chmod 755 /usr/lib/phabricator-ssh-hook.sh
+sudo sed -i 's/^\(VCSUSER=\).*$/\1"git"/' /usr/lib/phabricator-ssh-hook.sh
+sudo sed -i 's/^\(ROOT=\).*$/\1"\/var\/www\/phabricator"/' /usr/lib/phabricator-ssh-hook.sh
+
+# Create phabricator ssh daemon on port 22
+cp /var/www/phabricator/resources/sshd/sshd_config.phabricator.example /etc/ssh/sshd_config.phabricator
+# Edit AuthorizedKeysCommand, AuthorizedKeysCommandUser, and AllowUsers
+sudo sed -i 's/^\(AuthorizedKeysCommand \).*$/\1\/usr\/lib\/phabricator-ssh-hook.sh/' /etc/ssh/sshd_config.phabricator
+sudo sed -i 's/^\(AuthorizedKeysCommandUser \).*$/\1git/' /etc/ssh/sshd_config.phabricator
+sudo sed -i 's/^\(AllowUsers \).*$/\1git/' /etc/ssh/sshd_config.phabricator
+# Start the phabricator sshd
+/usr/sbin/sshd -f /etc/ssh/sshd_config.phabricator
+
+# Generating public/private rsa key pair.
+ssh-keygen -t rsa -C "admin@email.com"
+
+
+# Test
+echo {} | ssh -p 2222 git@phabricator.codemaster.io conduit conduit.ping
+
+
