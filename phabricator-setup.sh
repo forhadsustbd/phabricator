@@ -1,13 +1,14 @@
 #!/bin/sh
 # Example 
-# sh phabricator-setup.sh sql_pass server_name smtp_host smtp_user smtp_pass
-# sh phabricator-setup.sh password phabricator.codemaster.io smtp.mandrillapp.com forhadsustbd ljsouwoejrljwoerj
+# sh phabricator-setup.sh sql_pass server_name smtp_host smtp_user smtp_pass smtp_port
+# sh phabricator-setup.sh password phabricator.codemaster.io smtp.mandrillapp.com forhadsustbd ljsouwoejrljwoerj 587
 
 MYSQL_PASSWORD=${1}
 SERVER_NAME=${2}
 SMTP_HOST=${3}
 SMTP_USER=${4}
 SMTP_PASS=${5}
+SMTP_PORT=${6}
 
 # Linux update
 sudo apt-get -y update
@@ -56,7 +57,6 @@ www-data ALL=(phd) SETENV: NOPASSWD: /usr/bin/git-upload-pack, /usr/lib/git-core
 sudo mkdir /var/repo
 sudo chown -R phd /var/repo
 sudo chgrp -R phd /var/repo
-
 
 # Enable mod_rewrite
 sudo a2enmod rewrite
@@ -128,7 +128,7 @@ sudo sed -i 's/^\(AllowUsers \).*$/\1git/' /etc/ssh/sshd_config.phabricator
 ./bin/config set phpmailer.smtp-host $SMTP_HOST
 ./bin/config set phpmailer.smtp-user $SMTP_USER
 ./bin/config set phpmailer.smtp-password $SMTP_PASS
-
+./bin/config set phpmailer.smtp-port $SMTP_PORT
 
 # SSL configure [certbot.eff.org]
 ./bin/config set phabricator.base-uri 'https://'$SERVER_NAME'/'
@@ -144,11 +144,24 @@ sudo mkdir -p /var/tmp/phd
 sudo chown phd:phd /var/tmp/phd
 exec sudo -En -u phd -- ./bin/phd start
 
-# Generating public/private rsa key pair.
+# Generating public/private rsa key pair and add to the ssh file into server.
 ssh-keygen -t rsa -C "admin@example.com"
 
 # Test
 echo {} | ssh -p 2222 git@phabricator.codemaster.io conduit conduit.ping
+
+
+# Special settings
+# Multi factor auth enable for all user
+./bin/config set security.require-multi-factor-auth true
+
+# Force user to connect https
+./bin/config set security.require-https true
+
+# Require email verification
+./bin/config set auth.require-email-verification true
+
+#
 
 
 
